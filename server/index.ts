@@ -370,7 +370,7 @@ server.registerTool(
   {
     title: "Delete Thought",
     description:
-      "Delete a thought from the Open Brain by its ID. Irreversible — use search_thoughts or list_thoughts to confirm the correct ID before deleting. Operates across the full database regardless of user context (single-user deployments only).",
+      "Delete a thought from the Open Brain by its ID. Deleted thoughts are automatically archived and can be restored with recover_deleted_thought or browsed with list_deleted.",
     inputSchema: {
       id: z.string().describe("The UUID of the thought to delete (from search_thoughts or list_thoughts output)"),
     },
@@ -412,6 +412,156 @@ server.registerTool(
           {
             type: "text" as const,
             text: `Deleted thought ${id} (${m.type || "unknown"}):\n${preview}`,
+          },
+        ],
+      };
+    } catch (err: unknown) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// Tool 6: Undelete Thought (requires delete-archive extension)
+server.registerTool(
+  "recover_deleted_thought",
+  {
+    title: "Undelete Thought",
+    description:
+      "Restore a previously deleted thought from the archive. Use list_deleted to find archived thoughts first.",
+    inputSchema: {
+      id: z.string().describe("The original thought ID (UUID) to restore from the archive"),
+    },
+  },
+  async ({ id }) => {
+    try {
+      const { data, error } = await supabase.rpc("recover_deleted_thought", {
+        orig_id: id,
+      });
+
+      if (error) {
+        return {
+          content: [{ type: "text" as const, text: `Failed to undelete: ${error.message}` }],
+          isError: true,
+        };
+      }
+
+      if (!data || data.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: `No archived thought found with ID: ${id}` }],
+          isError: true,
+        };
+      }
+
+      const restored = data[0];
+      const preview = restored.content.length > 100
+        ? restored.content.substring(0, 100) + "..."
+        : restored.content;
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Restored thought ${restored.restored_id} (deleted ${restored.deleted_at}):\n${preview}`,
+          },
+        ],
+      };
+    } catch (err: unknown) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// Tool 7: List Deleted Thoughts (requires delete-archive extension)
+server.registerTool(
+  "list_deleted",
+  {
+    title: "List Deleted Thoughts",
+    description:
+      "Browse recently deleted thoughts from the archive. Optionally search by keyword.",
+    inputSchema: {
+      search: z.string().optional().describe("Keyword to search for in deleted thought content"),
+      limit: z.number().optional().default(20).describe("Max results to return (default 20)"),
+    },
+  },
+  async ({ search, limit }) => {
+    try {
+      const { data, error } = await supabase.rpc("list_deleted_thoughts", {
+        search_term: search || null,
+        max_results: limit,
+      });
+
+      if (error) {
+        return {
+          content: [{ type: "text" as const, text: `Failed to list deleted: ${error.message}` }],
+          isError: true,
+        };
+      }
+
+      if (!data || data.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: search ? `No deleted thoughts matching "${search}"` : "No deleted thoughts in archive" }],
+        };
+      }
+
+      const lines = data.map((t: { archive_id: number; original_id: string; content: string; deleted_at: string }) => {
+        const preview = t.content.length > 80 ? t.content.substring(0, 80) + "..." : t.content;
+        return `[${t.deleted_at}] ID: ${t.original_id}\n${preview}`;
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `${data.length} deleted thought(s):\n\n${lines.join("\n\n")}`,
+          },
+        ],
+      };
+    } catch (err: unknown) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// Tool 8: Purge Deleted Thoughts
+server.registerTool(
+  "purge_deleted",
+  {
+    title: "Purge Deleted Thoughts",
+    description:
+      "Permanently remove old entries from the deleted thoughts archive. Defaults to purging thoughts deleted more than 90 days ago.",
+    inputSchema: {
+      days: z.number().optional().default(90).describe("Purge thoughts deleted more than this many days ago (default 90)"),
+    },
+  },
+  async ({ days }) => {
+    try {
+      const { data, error } = await supabase.rpc("purge_deleted_thoughts", {
+        older_than_days: days,
+      });
+
+      if (error) {
+        return {
+          content: [{ type: "text" as const, text: `Failed to purge: ${error.message}` }],
+          isError: true,
+        };
+      }
+
+      const count = data?.[0]?.purged_count ?? 0;
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: count > 0
+              ? `Purged ${count} deleted thought(s) older than ${days} days.`
+              : `No deleted thoughts older than ${days} days to purge.`,
           },
         ],
       };
