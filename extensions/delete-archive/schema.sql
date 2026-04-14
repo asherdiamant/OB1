@@ -71,7 +71,7 @@ BEGIN
     -- Re-insert into thoughts (disable the delete trigger temporarily isn't needed —
     -- we're inserting, not deleting)
     INSERT INTO thoughts (id, content, embedding, metadata, created_at)
-    VALUES (rec.original_id, rec.content, rec.embedding, rec.metadata, rec.original_created_at)
+    VALUES (rec.original_id::UUID, rec.content, rec.embedding, rec.metadata, rec.original_created_at)
     ON CONFLICT (id) DO NOTHING;
 
     -- Remove from archive
